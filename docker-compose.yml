@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  dashboard:
+    build: .
+    ports:
+      - "5050:5050"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - DASHBOARD_TOKEN=${DASHBOARD_TOKEN:-}
+      - PORT=5050
+    restart: unless-stopped
