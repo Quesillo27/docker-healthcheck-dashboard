@@ -1,225 +1,182 @@
-"""
-Docker Healthcheck Dashboard — Flask API + SPA
-Muestra el estado de todos los containers Docker del VPS en tiempo real.
-Usa subprocess (sin SDK de Docker) — compatible con cualquier entorno.
-"""
+#!/usr/bin/env python3
+"""Docker Healthcheck Dashboard — Monitor de containers en tiempo real."""
 
+import subprocess
 import json
 import os
-import subprocess
-import time
 from datetime import datetime
-from functools import wraps
+from flask import Flask, jsonify, render_template_string
 
-from flask import Flask, jsonify, request, send_from_directory
+app = Flask(__name__)
+PORT = int(os.environ.get('PORT', 5050))
 
-app = Flask(__name__, static_folder="public")
+HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Docker Healthcheck Dashboard</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #c9d1d9; min-height: 100vh; }
+        header { background: #161b22; border-bottom: 1px solid #30363d; padding: 16px 24px; display: flex; align-items: center; gap: 12px; }
+        header h1 { font-size: 1.25rem; font-weight: 600; }
+        .badge { background: #21262d; border: 1px solid #30363d; border-radius: 12px; padding: 2px 10px; font-size: 0.75rem; }
+        main { padding: 24px; max-width: 1200px; margin: 0 auto; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        .stat-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+        .stat-card .value { font-size: 2rem; font-weight: 700; }
+        .stat-card .label { font-size: 0.8rem; color: #8b949e; margin-top: 4px; }
+        .running { color: #3fb950; }
+        .stopped { color: #f85149; }
+        .paused { color: #d29922; }
+        table { width: 100%; border-collapse: collapse; background: #161b22; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; }
+        th { background: #21262d; padding: 12px 16px; text-align: left; font-size: 0.8rem; text-transform: uppercase; color: #8b949e; }
+        td { padding: 12px 16px; border-top: 1px solid #30363d; font-size: 0.875rem; }
+        tr:hover td { background: #21262d; }
+        .status-badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500; }
+        .status-running { background: #1a4a2e; color: #3fb950; border: 1px solid #2ea043; }
+        .status-exited, .status-stopped { background: #3d1a1a; color: #f85149; border: 1px solid #da3633; }
+        .status-paused { background: #3d2e00; color: #d29922; border: 1px solid #9e6a03; }
+        .status-other { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+        .refresh-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .last-update { font-size: 0.8rem; color: #8b949e; }
+        button { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.875rem; }
+        button:hover { background: #30363d; }
+        #error { background: #3d1a1a; border: 1px solid #da3633; color: #f85149; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; display: none; }
+    </style>
+</head>
+<body>
+    <header>
+        <span>[D]</span>
+        <h1>Docker Healthcheck Dashboard</h1>
+        <span class="badge" id="host">cargando...</span>
+    </header>
+    <main>
+        <div class="stats">
+            <div class="stat-card"><div class="value running" id="count-running">-</div><div class="label">Running</div></div>
+            <div class="stat-card"><div class="value stopped" id="count-stopped">-</div><div class="label">Stopped/Exited</div></div>
+            <div class="stat-card"><div class="value paused" id="count-paused">-</div><div class="label">Paused</div></div>
+            <div class="stat-card"><div class="value" id="count-total">-</div><div class="label">Total</div></div>
+        </div>
+        <div class="refresh-bar">
+            <span class="last-update" id="last-update">-</span>
+            <button onclick="loadContainers()">Actualizar</button>
+        </div>
+        <div id="error"></div>
+        <table>
+            <thead><tr><th>Estado</th><th>Nombre</th><th>Imagen</th><th>Puertos</th><th>Uptime</th></tr></thead>
+            <tbody id="tbody"></tbody>
+        </table>
+    </main>
+    <script>
+        async function loadContainers() {
+            try {
+                const r = await fetch('/api/containers');
+                if (!r.ok) throw new Error(await r.text());
+                const data = await r.json();
+                document.getElementById('error').style.display = 'none';
+                document.getElementById('host').textContent = data.host;
+                document.getElementById('last-update').textContent = 'Actualizado: ' + new Date(data.timestamp).toLocaleTimeString('es-MX');
 
-# ── Configuración ────────────────────────────────────────────────────────────
+                const counts = { running: 0, stopped: 0, paused: 0 };
+                data.containers.forEach(c => {
+                    if (c.status === 'running') counts.running++;
+                    else if (c.status === 'paused') counts.paused++;
+                    else counts.stopped++;
+                });
+                document.getElementById('count-running').textContent = counts.running;
+                document.getElementById('count-stopped').textContent = counts.stopped;
+                document.getElementById('count-paused').textContent = counts.paused;
+                document.getElementById('count-total').textContent = data.containers.length;
 
-API_TOKEN = os.getenv("DASHBOARD_TOKEN", "")  # vacío = sin auth
-PORT = int(os.getenv("PORT", 5050))
-REFRESH_INTERVAL = int(os.getenv("REFRESH_INTERVAL", 10))
-CACHE_TTL = int(os.getenv("CACHE_TTL", 5))
-
-# ── Cache simple ──────────────────────────────────────────────────────────────
-
-_cache: dict = {}
-
-
-def cached(ttl: int):
-    def decorator(fn):
-        @wraps(fn)
-        def wrapper(*args, **kwargs):
-            key = fn.__name__
-            now = time.time()
-            if key in _cache and now - _cache[key]["ts"] < ttl:
-                return _cache[key]["data"]
-            result = fn(*args, **kwargs)
-            _cache[key] = {"data": result, "ts": now}
-            return result
-        return wrapper
-    return decorator
-
-
-# ── Auth opcional ─────────────────────────────────────────────────────────────
-
-def require_token(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if not API_TOKEN:
-            return f(*args, **kwargs)
-        token = request.headers.get("X-Token", "") or request.args.get("token", "")
-        if token != API_TOKEN:
-            return jsonify({"error": "Unauthorized"}), 401
-        return f(*args, **kwargs)
-    return decorated
-
-
-# ── Docker helpers ────────────────────────────────────────────────────────────
-
-def run_docker(cmd: list) -> tuple:
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        return r.stdout.strip(), r.returncode
-    except subprocess.TimeoutExpired:
-        return "", 124
-    except FileNotFoundError:
-        return "", 127
-
-
-@cached(CACHE_TTL)
-def get_containers() -> list:
-    fmt = (
-        '{"id":"{{.ID}}",'
-        '"name":"{{.Names}}",'
-        '"image":"{{.Image}}",'
-        '"status":"{{.Status}}",'
-        '"state":"{{.State}}",'
-        '"ports":"{{.Ports}}",'
-        '"created":"{{.CreatedAt}}"}'
-    )
-    out, rc = run_docker(["docker", "ps", "-a", f"--format={fmt}"])
-    if rc != 0:
-        return []
-
-    containers = []
-    for line in out.splitlines():
-        try:
-            c = json.loads(line)
-            c["healthy"] = c["state"].lower() in ("running", "restarting")
-            c["state_icon"] = {
-                "running":    "🟢",
-                "exited":     "🔴",
-                "paused":     "🟡",
-                "restarting": "🔄",
-                "dead":       "💀",
-                "created":    "⚪",
-            }.get(c["state"].lower(), "❓")
-            containers.append(c)
-        except json.JSONDecodeError:
-            continue
-
-    return containers
-
-
-@cached(CACHE_TTL)
-def get_system_info() -> dict:
-    out, rc = run_docker(["docker", "info", "--format", "{{json .}}"])
-    if rc != 0:
-        return {}
-    try:
-        info = json.loads(out)
-        return {
-            "containers_running": info.get("ContainersRunning", 0),
-            "containers_stopped": info.get("ContainersStopped", 0),
-            "containers_paused":  info.get("ContainersPaused", 0),
-            "images":             info.get("Images", 0),
-            "server_version":     info.get("ServerVersion", "unknown"),
-            "memory_total":       info.get("MemTotal", 0),
-            "cpus":               info.get("NCPU", 0),
-            "swarm_active":       info.get("Swarm", {}).get("LocalNodeState") == "active",
-        }
-    except json.JSONDecodeError:
-        return {}
-
-
-@cached(CACHE_TTL)
-def get_disk_usage() -> dict:
-    out, rc = run_docker(["docker", "system", "df", "--format", "{{json .}}"])
-    if rc != 0:
-        return {}
-    result = {}
-    for line in out.splitlines():
-        try:
-            item = json.loads(line)
-            t = item.get("Type", "").lower()
-            result[t] = {
-                "total":       item.get("TotalCount", 0),
-                "size":        item.get("Size", "0B"),
-                "reclaimable": item.get("Reclaimable", "0B"),
+                const tbody = document.getElementById('tbody');
+                tbody.innerHTML = data.containers.map(c => {
+                    const st = c.status === 'running' ? 'running' :
+                               c.status === 'paused' ? 'paused' :
+                               (c.status === 'exited' || c.status === 'stopped') ? 'exited' : 'other';
+                    return '<tr>' +
+                        '<td><span class="status-badge status-' + st + '">' + c.status + '</span></td>' +
+                        '<td><strong>' + c.name + '</strong></td>' +
+                        '<td style="color:#8b949e;font-size:0.8rem">' + c.image + '</td>' +
+                        '<td style="font-size:0.8rem">' + (c.ports || '-') + '</td>' +
+                        '<td style="font-size:0.8rem">' + (c.uptime || '-') + '</td>' +
+                        '</tr>';
+                }).join('');
+            } catch (e) {
+                const el = document.getElementById('error');
+                el.textContent = 'Error: ' + e.message;
+                el.style.display = 'block';
             }
-        except json.JSONDecodeError:
-            continue
-    return result
+        }
+        loadContainers();
+        setInterval(loadContainers, 15000);
+    </script>
+</body>
+</html>"""
 
+def get_containers():
+    """Obtiene lista de containers via docker ps."""
+    try:
+        result = subprocess.run(
+            ['docker', 'ps', '-a', '--format',
+             '{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}'],
+            capture_output=True, text=True, timeout=10
+        )
+        containers = []
+        for line in result.stdout.strip().split('\n'):
+            if not line:
+                continue
+            parts = line.split('|')
+            if len(parts) >= 3:
+                name, image, status_full = parts[0], parts[1], parts[2]
+                ports = parts[3] if len(parts) > 3 else ''
+                status_lower = status_full.lower()
+                if 'up' in status_lower:
+                    status = 'running'
+                elif 'exited' in status_lower:
+                    status = 'exited'
+                elif 'paused' in status_lower:
+                    status = 'paused'
+                else:
+                    status = 'stopped'
+                containers.append({
+                    'name': name,
+                    'image': image.split('/')[-1] if '/' in image else image,
+                    'status': status,
+                    'ports': ports[:60] if ports else '',
+                    'uptime': status_full[:50],
+                })
+        return containers
+    except Exception as e:
+        return [{'name': 'error', 'image': str(e), 'status': 'error', 'ports': '', 'uptime': ''}]
 
-# ── API endpoints ─────────────────────────────────────────────────────────────
+def get_hostname():
+    try:
+        return subprocess.run(['hostname'], capture_output=True, text=True).stdout.strip()
+    except:
+        return 'unknown'
 
-@app.route("/health")
-def health():
-    _, rc = run_docker(["docker", "info"])
-    docker_ok = rc == 0
-    return jsonify({
-        "status": "ok",
-        "docker": "ok" if docker_ok else "error",
-        "timestamp": datetime.now().isoformat(),
-    }), 200 if docker_ok else 503
-
-
-@app.route("/api/containers")
-@require_token
-def api_containers():
-    containers = get_containers()
-    return jsonify({
-        "containers": containers,
-        "total": len(containers),
-        "running": sum(1 for c in containers if c["state"].lower() == "running"),
-        "timestamp": datetime.now().isoformat(),
-    })
-
-
-@app.route("/api/system")
-@require_token
-def api_system():
-    return jsonify({
-        "system": get_system_info(),
-        "disk":   get_disk_usage(),
-        "timestamp": datetime.now().isoformat(),
-    })
-
-
-@app.route("/api/container/<container_id>/logs")
-@require_token
-def api_container_logs(container_id: str):
-    safe_id = "".join(c for c in container_id if c.isalnum() or c in "-_.")
-    if safe_id != container_id:
-        return jsonify({"error": "Invalid container ID"}), 400
-    lines = min(int(request.args.get("lines", 50)), 500)
-    out, _ = run_docker(["docker", "logs", "--tail", str(lines), safe_id])
-    return jsonify({"logs": out.splitlines(), "container_id": safe_id})
-
-
-@app.route("/api/container/<container_id>/action", methods=["POST"])
-@require_token
-def api_container_action(container_id: str):
-    safe_id = "".join(c for c in container_id if c.isalnum() or c in "-_.")
-    if safe_id != container_id:
-        return jsonify({"error": "Invalid container ID"}), 400
-
-    data = request.get_json(silent=True) or {}
-    action = data.get("action", "")
-    if action not in ("start", "stop", "restart"):
-        return jsonify({"error": "Action must be start|stop|restart"}), 400
-
-    out, rc = run_docker(["docker", action, safe_id])
-    _cache.clear()
-    return jsonify({
-        "action": action,
-        "container": safe_id,
-        "success": rc == 0,
-        "output": out,
-    })
-
-
-# ── Frontend ──────────────────────────────────────────────────────────────────
-
-@app.route("/")
+@app.route('/')
 def index():
-    return send_from_directory("public", "index.html")
+    return render_template_string(HTML_TEMPLATE)
 
+@app.route('/api/containers')
+def api_containers():
+    return jsonify({
+        'timestamp': datetime.utcnow().isoformat() + 'Z',
+        'host': get_hostname(),
+        'containers': get_containers(),
+    })
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+@app.route('/health')
+def health():
+    try:
+        subprocess.run(['docker', 'ps'], capture_output=True, timeout=5)
+        return jsonify({'status': 'ok', 'docker': 'accessible', 'timestamp': datetime.utcnow().isoformat() + 'Z'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'docker': str(e)}), 503
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=PORT, debug=False)
+if __name__ == '__main__':
+    print(f"Docker Healthcheck Dashboard en http://0.0.0.0:{PORT}")
+    app.run(host='0.0.0.0', port=PORT, debug=False)

@@ -1,73 +1,63 @@
 #!/usr/bin/env python3
-"""Smoke tests para Docker Healthcheck Dashboard."""
-
+"""Smoke tests para docker-healthcheck-dashboard."""
 import sys
-import importlib.util
+import os
 from pathlib import Path
 
-# Verificar que app.py existe y es importable
-APP_PATH = Path(__file__).parent.parent / "app.py"
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
+def test_import():
+    """Flask app importa sin errores."""
+    import app as dashboard
+    assert hasattr(dashboard, 'app')
+    assert hasattr(dashboard, 'get_containers')
+    print("test_import passed")
 
-def test_app_exists():
-    assert APP_PATH.exists(), f"app.py no encontrado en {APP_PATH}"
-    print("✅ app.py existe")
+def test_health_route():
+    """Ruta /health responde."""
+    import app as dashboard
+    client = dashboard.app.test_client()
+    resp = client.get('/health')
+    assert resp.status_code in [200, 503]
+    data = resp.get_json()
+    assert 'status' in data
+    print(f"test_health_route passed (status={data['status']})")
 
+def test_index_route():
+    """Ruta / retorna HTML."""
+    import app as dashboard
+    client = dashboard.app.test_client()
+    resp = client.get('/')
+    assert resp.status_code == 200
+    assert b'Docker Healthcheck Dashboard' in resp.data
+    print("test_index_route passed")
 
-def test_app_syntax():
-    spec = importlib.util.spec_from_file_location("app", APP_PATH)
-    # Solo verificar que se puede cargar el spec (no ejecutar)
-    assert spec is not None
-    print("✅ app.py tiene sintaxis válida (spec cargado)")
+def test_api_containers():
+    """API retorna JSON con estructura correcta."""
+    import app as dashboard
+    client = dashboard.app.test_client()
+    resp = client.get('/api/containers')
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert 'containers' in data
+    assert 'timestamp' in data
+    assert isinstance(data['containers'], list)
+    print("test_api_containers passed")
 
-
-def test_requirements_exist():
-    req_path = APP_PATH.parent / "requirements.txt"
-    assert req_path.exists(), "requirements.txt no encontrado"
-    content = req_path.read_text()
-    assert "flask" in content.lower() or "Flask" in content, "Flask no está en requirements.txt"
-    print("✅ requirements.txt existe y contiene Flask")
-
-
-def test_dockerfile_exists():
-    dockerfile = APP_PATH.parent / "Dockerfile"
-    assert dockerfile.exists(), "Dockerfile no encontrado"
-    content = dockerfile.read_text()
-    assert "FROM" in content, "Dockerfile no tiene instrucción FROM"
-    assert "CMD" in content or "ENTRYPOINT" in content, "Dockerfile no tiene CMD/ENTRYPOINT"
-    print("✅ Dockerfile existe y tiene estructura correcta")
-
-
-def test_templates_exist():
-    templates = APP_PATH.parent / "templates"
-    assert templates.exists(), "Directorio templates/ no encontrado"
-    html_files = list(templates.glob("*.html"))
-    assert len(html_files) > 0, "No hay archivos HTML en templates/"
-    print(f"✅ templates/ existe con {len(html_files)} archivo(s) HTML")
-
-
-if __name__ == "__main__":
-    print("🧪 Ejecutando smoke tests de Docker Healthcheck Dashboard...\n")
-    errors = 0
-
-    tests = [
-        test_app_exists,
-        test_app_syntax,
-        test_requirements_exist,
-        test_dockerfile_exists,
-        test_templates_exist,
-    ]
-
-    for test in tests:
+if __name__ == '__main__':
+    tests = [test_import, test_health_route, test_index_route, test_api_containers]
+    failed = 0
+    for t in tests:
         try:
-            test()
+            t()
         except Exception as e:
-            print(f"❌ {test.__name__}: FAIL — {e}")
-            errors += 1
+            print(f"FAILED {t.__name__}: {e}")
+            import traceback; traceback.print_exc()
+            failed += 1
 
-    print(f"\n{'='*50}")
-    if errors == 0:
-        print(f"✅ Todos los smoke tests pasaron ({len(tests)}/{len(tests)})")
-    else:
-        print(f"❌ {errors} test(s) fallaron")
+    if failed:
+        print(f"\n{failed}/{len(tests)} tests fallaron")
         sys.exit(1)
+    else:
+        print(f"\nTodos los tests pasaron ({len(tests)}/{len(tests)})")
+        sys.exit(0)
