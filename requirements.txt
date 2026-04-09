@@ -1,3 +1,2 @@
-flask>=3.0.0
-docker>=7.0.0
-gunicorn>=21.2.0
+flask==3.0.3
+gunicorn==21.2.0
