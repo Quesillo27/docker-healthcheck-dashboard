@@ -9,4 +9,4 @@ run:
 	PORT=$(PORT) python3 app.py
 
 test:
-	python3 tests/test_smoke.py
+	python3 -m pytest tests/ -v

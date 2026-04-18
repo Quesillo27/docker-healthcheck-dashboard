@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Docker Healthcheck Dashboard</title>
+  <style>
+    :root {
+      --bg: #0f1117; --surface: #1a1d2e; --surface2: #252840;
+      --border: #2e3150; --text: #e2e8f0; --text2: #94a3b8;
+      --green: #22c55e; --red: #ef4444; --yellow: #f59e0b;
+      --blue: #3b82f6; --purple: #a855f7; --cyan: #06b6d4;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
+    header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 1rem 1.5rem; display: flex; align-items: center; justify-content: space-between; }
+    header h1 { font-size: 1.2rem; font-weight: 600; display: flex; align-items: center; gap: 0.5rem; }
+    .badge { font-size: 0.7rem; padding: 0.2rem 0.5rem; border-radius: 999px; background: var(--surface2); color: var(--text2); }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .dot-green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .dot-red   { background: var(--red); }
+    .dot-yellow{ background: var(--yellow); }
+    .refresh-info { font-size: 0.75rem; color: var(--text2); }
+    main { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+    .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1rem; }
+    .stat-card .label { font-size: 0.75rem; color: var(--text2); margin-bottom: 0.3rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .stat-card .value { font-size: 1.8rem; font-weight: 700; }
+    .stat-card .sub   { font-size: 0.75rem; color: var(--text2); margin-top: 0.2rem; }
+    .value.green { color: var(--green); }
+    .value.red   { color: var(--red); }
+    .value.blue  { color: var(--blue); }
+    .value.purple{ color: var(--purple); }
+    .section-title { font-size: 0.85rem; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.75rem; }
+    .containers-grid { display: grid; gap: 0.75rem; }
+    .container-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.25rem; display: grid; grid-template-columns: auto 1fr auto; gap: 0.75rem; align-items: start; cursor: pointer; transition: border-color 0.2s; }
+    .container-card:hover { border-color: var(--blue); }
+    .container-card.running { border-left: 3px solid var(--green); }
+    .container-card.exited  { border-left: 3px solid var(--red); }
+    .container-card.paused  { border-left: 3px solid var(--yellow); }
+    .container-icon { font-size: 1.5rem; padding-top: 0.2rem; }
+    .container-name { font-weight: 600; font-size: 0.95rem; margin-bottom: 0.2rem; word-break: break-all; }
+    .container-image { font-size: 0.75rem; color: var(--text2); margin-bottom: 0.3rem; }
+    .container-status { font-size: 0.75rem; color: var(--text2); }
+    .container-ports { font-size: 0.72rem; color: var(--cyan); margin-top: 0.2rem; }
+    .container-actions { display: flex; gap: 0.4rem; flex-direction: column; }
+    .btn { font-size: 0.72rem; padding: 0.3rem 0.6rem; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+    .btn:hover { background: var(--border); }
+    .btn.danger { border-color: var(--red); color: var(--red); }
+    .btn.danger:hover { background: #ef444420; }
+    .btn.success { border-color: var(--green); color: var(--green); }
+    .btn.success:hover { background: #22c55e20; }
+    .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
+    .modal-backdrop.open { display: flex; }
+    .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; width: min(600px, 95vw); max-height: 80vh; overflow-y: auto; }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+    .modal-title { font-weight: 600; }
+    .close-btn { background: none; border: none; color: var(--text2); cursor: pointer; font-size: 1.2rem; }
+    .log-output { background: #0a0c14; border-radius: 6px; padding: 0.75rem; font-family: monospace; font-size: 0.75rem; line-height: 1.5; white-space: pre-wrap; word-break: break-all; max-height: 400px; overflow-y: auto; color: #a0f0a0; }
+    .toast { position: fixed; bottom: 1.5rem; right: 1.5rem; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; font-size: 0.85rem; opacity: 0; transition: opacity 0.3s; z-index: 200; }
+    .toast.show { opacity: 1; }
+    .filter-bar { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
+    .filter-btn { padding: 0.3rem 0.75rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); color: var(--text2); cursor: pointer; font-size: 0.8rem; transition: all 0.15s; }
+    .filter-btn.active { background: var(--blue); border-color: var(--blue); color: white; }
+    .search-input { padding: 0.3rem 0.75rem; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.8rem; flex: 1; min-width: 120px; }
+    .loading { display: flex; align-items: center; justify-content: center; height: 200px; color: var(--text2); font-size: 0.9rem; }
+    .error-box { background: #ef444415; border: 1px solid var(--red); border-radius: 8px; padding: 1rem; color: var(--red); font-size: 0.85rem; }
+    @media (max-width: 640px) {
+      .container-card { grid-template-columns: auto 1fr; }
+      .container-actions { flex-direction: row; grid-column: 1 / -1; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>
+    <span>🐳</span>
+    Docker Dashboard
+    <span class="badge" id="docker-version">v—</span>
+  </h1>
+  <div style="display:flex;align-items:center;gap:1rem">
+    <span class="refresh-info">Auto-refresh: <span id="countdown">—</span>s</span>
+    <span><span class="status-dot dot-green" id="api-dot"></span></span>
+  </div>
+</header>
+
+<main>
+  <!-- Stats row -->
+  <div class="stats-grid" id="stats-grid">
+    <div class="stat-card">
+      <div class="label">Corriendo</div>
+      <div class="value green" id="stat-running">—</div>
+      <div class="sub" id="stat-total">de — containers</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Detenidos</div>
+      <div class="value red" id="stat-stopped">—</div>
+      <div class="sub">containers exited</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Imágenes</div>
+      <div class="value blue" id="stat-images">—</div>
+      <div class="sub">locales</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Swarm</div>
+      <div class="value purple" id="stat-swarm">—</div>
+      <div class="sub">modo cluster</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">CPUs</div>
+      <div class="value" id="stat-cpus">—</div>
+      <div class="sub" id="stat-mem">RAM total: —</div>
+    </div>
+  </div>
+
+  <!-- Filter bar -->
+  <div class="filter-bar">
+    <button class="filter-btn active" onclick="setFilter('all')">Todos</button>
+    <button class="filter-btn" onclick="setFilter('running')">Corriendo</button>
+    <button class="filter-btn" onclick="setFilter('exited')">Detenidos</button>
+    <input class="search-input" type="text" placeholder="Buscar por nombre..." id="search-input" oninput="renderContainers()">
+    <button class="btn" onclick="refreshAll()">↻ Refresh</button>
+  </div>
+
+  <!-- Containers -->
+  <div class="section-title">Containers</div>
+  <div class="containers-grid" id="containers-grid">
+    <div class="loading">Cargando containers...</div>
+  </div>
+</main>
+
+<!-- Modal de logs -->
+<div class="modal-backdrop" id="log-modal" onclick="closeModal(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="modal-title">Logs</span>
+      <button class="close-btn" onclick="document.getElementById('log-modal').classList.remove('open')">✕</button>
+    </div>
+    <div class="log-output" id="log-output">Cargando...</div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+  const API = '';
+  const TOKEN = localStorage.getItem('dashboard_token') || '';
+  const REFRESH = {{ refresh_interval if refresh_interval else 10 }};
+
+  let allContainers = [];
+  let currentFilter = 'all';
+  let countdownVal = REFRESH;
+  let countdownTimer;
+
+  function esc(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function headers() {
+    const h = { 'Content-Type': 'application/json' };
+    if (TOKEN) h['X-Token'] = TOKEN;
+    return h;
+  }
+
+  async function apiFetch(url, opts = {}) {
+    opts.headers = { ...headers(), ...(opts.headers || {}) };
+    const r = await fetch(url, opts);
+    if (r.status === 401) { toast('⚠️ Token inválido o requerido'); return null; }
+    return r.json();
+  }
+
+  function toast(msg, duration = 3000) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), duration);
+  }
+
+  function fmtBytes(bytes) {
+    if (!bytes) return '0B';
+    const gb = bytes / 1073741824;
+    if (gb >= 1) return gb.toFixed(1) + ' GB';
+    const mb = bytes / 1048576;
+    if (mb >= 1) return mb.toFixed(0) + ' MB';
+    return (bytes / 1024).toFixed(0) + ' KB';
+  }
+
+  function setFilter(f) {
+    currentFilter = f;
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+    renderContainers();
+  }
+
+  function renderContainers() {
+    const grid = document.getElementById('containers-grid');
+    const search = document.getElementById('search-input').value.toLowerCase();
+
+    let filtered = allContainers.filter(c => {
+      const matchFilter = currentFilter === 'all' || c.state.toLowerCase() === currentFilter;
+      const matchSearch = !search || c.name.toLowerCase().includes(search) || c.image.toLowerCase().includes(search);
+      return matchFilter && matchSearch;
+    });
+
+    if (filtered.length === 0) {
+      grid.innerHTML = '<div class="loading">No hay containers que mostrar</div>';
+      return;
+    }
+
+    grid.innerHTML = filtered.map(c => {
+      const isRunning = c.state.toLowerCase() === 'running';
+      const actionBtns = isRunning
+        ? `<button class="btn danger" data-id="${c.id}" data-action="stop">⏹ Stop</button>
+           <button class="btn" data-id="${c.id}" data-action="restart">↺ Restart</button>`
+        : `<button class="btn success" data-id="${c.id}" data-action="start">▶ Start</button>`;
+      return `
+      <div class="container-card ${c.state.toLowerCase()}" data-id="${c.id}" data-name="${esc(c.name)}">
+        <div class="container-icon">${c.state_icon || '⚪'}</div>
+        <div>
+          <div class="container-name">${esc(c.name)}</div>
+          <div class="container-image">📦 ${esc(c.image)}</div>
+          <div class="container-status">${esc(c.status)}</div>
+          ${c.ports ? `<div class="container-ports">🔌 ${esc(c.ports)}</div>` : ''}
+        </div>
+        <div class="container-actions">
+          ${actionBtns}
+          <button class="btn logs-btn" data-id="${c.id}" data-name="${esc(c.name)}">📄 Logs</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    // Attach event listeners (avoids inline onclick XSS)
+    grid.querySelectorAll('[data-action]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        containerAction(btn.dataset.id, btn.dataset.action);
+      });
+    });
+    grid.querySelectorAll('.logs-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        showLogs(btn.dataset.id, btn.dataset.name);
+      });
+    });
+    grid.querySelectorAll('.container-card').forEach(card => {
+      card.addEventListener('click', () => showLogs(card.dataset.id, card.dataset.name));
+    });
+  }
+
+  async function loadContainers() {
+    const data = await apiFetch('/api/containers');
+    if (!data) return;
+    allContainers = data.containers || [];
+    renderContainers();
+    document.getElementById('stat-running').textContent = data.running;
+    document.getElementById('stat-total').textContent = `de ${data.total} containers`;
+  }
+
+  async function loadSystem() {
+    const data = await apiFetch('/api/system');
+    if (!data) return;
+    const s = data.system || {};
+    document.getElementById('stat-stopped').textContent = s.containers_stopped ?? '—';
+    document.getElementById('stat-images').textContent = s.images ?? '—';
+    document.getElementById('stat-swarm').textContent = s.swarm_active ? 'Activo' : 'Off';
+    document.getElementById('stat-cpus').textContent = s.cpus ?? '—';
+    document.getElementById('stat-mem').textContent = `RAM: ${fmtBytes(s.memory_total)}`;
+    document.getElementById('docker-version').textContent = s.server_version ? `v${s.server_version}` : '—';
+  }
+
+  async function showLogs(id, name) {
+    document.getElementById('log-modal').classList.add('open');
+    document.getElementById('modal-title').textContent = `📄 Logs — ${name}`;
+    document.getElementById('log-output').textContent = 'Cargando...';
+    const data = await apiFetch(`/api/container/${id}/logs?lines=100`);
+    if (!data) return;
+    document.getElementById('log-output').textContent = data.logs.join('\n') || '(sin logs)';
+  }
+
+  async function containerAction(id, action) {
+    toast(`⏳ Ejecutando ${action}...`);
+    const data = await apiFetch(`/api/container/${id}/action`, {
+      method: 'POST',
+      body: JSON.stringify({ action })
+    });
+    if (!data) return;
+    toast(data.success ? `✅ ${action} completado` : `❌ Error en ${action}`);
+    await loadContainers();
+  }
+
+  function closeModal(e) {
+    if (e.target === document.getElementById('log-modal')) {
+      document.getElementById('log-modal').classList.remove('open');
+    }
+  }
+
+  async function refreshAll() {
+    await Promise.all([loadContainers(), loadSystem()]);
+    countdownVal = REFRESH;
+  }
+
+  function startCountdown() {
+    clearInterval(countdownTimer);
+    countdownVal = REFRESH;
+    countdownTimer = setInterval(() => {
+      countdownVal--;
+      document.getElementById('countdown').textContent = countdownVal;
+      if (countdownVal <= 0) {
+        refreshAll();
+      }
+    }, 1000);
+  }
+
+  // Init
+  refreshAll().then(() => startCountdown());
+</script>
+</body>
+</html>

@@ -10,4 +10,8 @@ services:
     environment:
       - DASHBOARD_TOKEN=${DASHBOARD_TOKEN:-}
       - PORT=5050
+      - REFRESH_INTERVAL=${REFRESH_INTERVAL:-10}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DOCKER_TIMEOUT=${DOCKER_TIMEOUT:-10}
+      - LOGS_MAX_LINES=${LOGS_MAX_LINES:-500}
     restart: unless-stopped
