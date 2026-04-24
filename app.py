@@ -47,6 +47,18 @@ def require_auth(fn):
     return wrapper
 
 
+def _parse_positive_int(name: str, raw_value: str | None) -> int | None:
+    if raw_value is None or raw_value == '':
+        return None
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise ValueError(f'{name} must be an integer') from exc
+    if value < 0:
+        raise ValueError(f'{name} must be greater than or equal to 0')
+    return value
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route('/')
@@ -60,7 +72,34 @@ def index():
 @app.route('/api/containers')
 @require_auth
 def api_containers():
+    try:
+        state_filter = request.args.get('state', '').strip().lower()
+        search = request.args.get('search', '').strip().lower()
+        limit = _parse_positive_int('limit', request.args.get('limit'))
+        offset = _parse_positive_int('offset', request.args.get('offset')) or 0
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    if state_filter and state_filter not in {'running', 'exited', 'paused', 'restarting', 'dead', 'created'}:
+        return jsonify({'error': 'state must be one of: running, exited, paused, restarting, dead, created'}), 400
+
     containers = get_containers()
+    all_total = len(containers)
+
+    if state_filter:
+        containers = [c for c in containers if c['state'] == state_filter]
+    if search:
+        containers = [
+            c for c in containers
+            if search in c['name'].lower() or search in c['image'].lower()
+        ]
+
+    filtered_total = len(containers)
+    if offset:
+        containers = containers[offset:]
+    if limit is not None:
+        containers = containers[:limit]
+
     running = sum(1 for c in containers if c['state'] == 'running')
     stopped = sum(1 for c in containers if c['state'] != 'running')
     return jsonify({
@@ -68,8 +107,16 @@ def api_containers():
         'host': get_hostname(),
         'containers': containers,
         'total': len(containers),
+        'all_total': all_total,
+        'filtered_total': filtered_total,
         'running': running,
         'stopped': stopped,
+        'filters': {
+            'state': state_filter or None,
+            'search': search or None,
+            'limit': limit,
+            'offset': offset,
+        },
     })
 
 

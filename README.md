@@ -1,6 +1,6 @@
 # docker-healthcheck-dashboard
 
-![tests](https://img.shields.io/badge/tests-37%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-46%20passing-brightgreen)
 
 App web Flask que muestra el estado de todos los containers Docker en tiempo real. Incluye logs inline, acciones (start/stop/restart), info del sistema y auto-refresh configurable.
 
@@ -48,6 +48,25 @@ El token también se puede guardar en `localStorage.dashboard_token` desde el na
 | `GET /api/container/<id>/logs?lines=100` | — | Últimas N líneas de logs |
 | `POST /api/container/<id>/action` | `{"action": "start\|stop\|restart"}` | Controlar container |
 
+### Filtros en `GET /api/containers`
+
+La lista de containers ahora acepta filtros y paginación opcional para integraciones o hosts con muchos containers:
+
+| Query param | Ejemplo | Descripción |
+|-------------|---------|-------------|
+| `state` | `running` | Filtra por estado (`running`, `exited`, `paused`, `restarting`, `dead`, `created`) |
+| `search` | `nginx` | Busca por nombre o imagen |
+| `limit` | `10` | Límite máximo de resultados |
+| `offset` | `20` | Desplazamiento para paginación |
+
+Ejemplo:
+
+```bash
+curl "http://localhost:5050/api/containers?state=running&search=nginx&limit=10"
+```
+
+La respuesta mantiene `containers`, `total`, `running` y `stopped`, y agrega `all_total`, `filtered_total` y `filters` para facilitar paginación y debugging.
+
 ## Docker
 
 ```bash
@@ -74,7 +93,7 @@ docker compose up -d
 ├── templates/
 │   └── dashboard.html        # UI principal
 ├── tests/
-│   └── test_app.py           # 37 tests
+│   └── test_app.py           # 46 tests
 └── Dockerfile
 ```
 

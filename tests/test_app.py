@@ -136,6 +136,56 @@ def test_api_containers_empty(client):
     assert data['stopped'] == 0
 
 
+def test_api_containers_filter_by_state(client):
+    with patch('app.get_containers', return_value=_SAMPLE_CONTAINERS), \
+         patch('app.get_hostname', return_value='host'):
+        resp = client.get('/api/containers?state=running')
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['total'] == 1
+    assert data['all_total'] == 2
+    assert data['filtered_total'] == 1
+    assert data['containers'][0]['state'] == 'running'
+    assert data['filters']['state'] == 'running'
+
+
+def test_api_containers_filter_by_search(client):
+    with patch('app.get_containers', return_value=_SAMPLE_CONTAINERS), \
+         patch('app.get_hostname', return_value='host'):
+        resp = client.get('/api/containers?search=redis')
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['total'] == 1
+    assert data['containers'][0]['image'] == 'redis:7'
+    assert data['filters']['search'] == 'redis'
+
+
+def test_api_containers_pagination(client):
+    with patch('app.get_containers', return_value=_SAMPLE_CONTAINERS), \
+         patch('app.get_hostname', return_value='host'):
+        resp = client.get('/api/containers?offset=1&limit=1')
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['total'] == 1
+    assert data['all_total'] == 2
+    assert data['filtered_total'] == 2
+    assert data['filters']['offset'] == 1
+    assert data['filters']['limit'] == 1
+    assert data['containers'][0]['id'] == 'dead0000beef'
+
+
+def test_api_containers_invalid_state(client):
+    resp = client.get('/api/containers?state=invalid')
+    assert resp.status_code == 400
+    assert 'state must be one of' in resp.get_json()['error']
+
+
+def test_api_containers_invalid_limit(client):
+    resp = client.get('/api/containers?limit=-1')
+    assert resp.status_code == 400
+    assert resp.get_json()['error'] == 'limit must be greater than or equal to 0'
+
+
 def test_api_containers_requires_auth(auth_client):
     resp = auth_client.get('/api/containers')
     assert resp.status_code == 401
